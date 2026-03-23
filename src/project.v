@@ -50,7 +50,7 @@ module tt_um_vga_ca(
   parameter CELL_SIZE = 1<<logCELL_SIZE;
   parameter WIDTH = 640;
   parameter HEIGHT = 480;
-  parameter GRID_W = 120;
+  parameter GRID_W = 132;
   parameter PAD_LEFT = (WIDTH-GRID_W*CELL_SIZE)/2;
   
   wire [9:0] x = pix_x-PAD_LEFT;
@@ -105,7 +105,6 @@ module tt_um_vga_ca(
 
   `define REG(name, en) `CLKGATE(name, en) wire[L:0] name``_next; `DFF(name) wire[L:0] name``_buf; `BUF(name)
 
-  `define SHIFT(data) data``_next[L:1] = data``_buf[L-1:0]
   `define HEAD(data) data``_next[0]
   `define TAIL(data,i) data``_buf[L-(i)]
 
@@ -118,8 +117,6 @@ module tt_um_vga_ca(
 
   reg [10:0] row_count;
   wire [2:0] i = row_count[10:8];
-  //wire [10:0] k = row_count+{5'b00000,cell_x[4:0]};
-  //wire [2:0] i = k[10:8];
   reg [7:0] rules [0:7];
   initial begin
         rules[0] = 30;
