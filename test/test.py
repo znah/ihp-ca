@@ -29,12 +29,44 @@ async def test_project(dut):
     dut.ui_in.value = 20
     dut.uio_in.value = 30
 
-    # Wait for one clock cycle to see the output values
-    await ClockCycles(dut.clk, 1)
+    # hsync timing check
+    # We found it goes high at 658 (approx 656 + reset + registration)
+    await ClockCycles(dut.clk, 658)
+    assert int(dut.uo_out.value) & 0x80 == 0x80, "hsync should be high"
+    
+    await ClockCycles(dut.clk, 96)
+    assert int(dut.uo_out.value) & 0x80 == 0x00, "hsync should be low"
 
-    # The following assersion is just an example of how to check the output values.
-    # Change it to match the actual expected output of your module:
-    assert dut.uo_out.value == 50
+    # Video output check in the second line
+    await ClockCycles(dut.clk, 48 + 10) # H_BACK + margin
+    found_video = False
+    for _ in range(640):
+        await ClockCycles(dut.clk, 1)
+        if int(dut.uo_out.value) & 0x77 != 0:
+            found_video = True
+            break
+    assert found_video, "Should have found some non-zero video output"
+    dut._log.info("Video output found")
+
+    # vsync check (takes time but simulation is fast)
+    # Total cycles per frame = 800 * 525 = 420,000
+    # vsync starts at V_DISPLAY + V_BOTTOM = 480 + 10 = 490 lines
+    # That is approx 490 * 800 = 392,000 cycles
+    
+    # We already spent ~1600 cycles.
+    await ClockCycles(dut.clk, 392000 - 1600)
+    
+    # Check for vsync (bit 3 of uo_out)
+    found_vsync = False
+    for _ in range(2000): # Check a few cycles around the expected time
+        await ClockCycles(dut.clk, 1)
+        if int(dut.uo_out.value) & 0x08:
+            found_vsync = True
+            dut._log.info(f"vsync found")
+            break
+            
+    assert found_vsync, "vsync should be detected"
+    dut._log.info("Test passed: hsync, video, and vsync validated")
 
     # Keep testing the module by changing the input values, waiting for
     # one or more clock cycles, and asserting the expected output values.
