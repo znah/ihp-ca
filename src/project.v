@@ -50,7 +50,7 @@ module tt_um_vga_ca(
   parameter CELL_SIZE = 1<<logCELL_SIZE;
   parameter WIDTH = 640;
   parameter HEIGHT = 480;
-  parameter GRID_W = 132;
+  parameter GRID_W = 128;
   parameter PAD_LEFT = (WIDTH-GRID_W*CELL_SIZE)/2;
   
   wire [9:0] x = pix_x-PAD_LEFT;
@@ -60,19 +60,7 @@ module tt_um_vga_ca(
   wire [logCELL_SIZE-1:0] fract_y = pix_y[logCELL_SIZE-1:0];
   
   parameter L = GRID_W-1;
-  `ifdef SIM
-    `define BUF(name) assign name``_buf = name
-    `define CLKGATE(name, en) \
-      reg name``_latchen; \
-      /* verilator lint_off LATCH */ \
-      always @(*) if (!clk) name``_latchen = en; \
-      /* verilator lint_on LATCH */ \
-      wire name``_gclk = clk && name``_latchen;
-    `define DFF(name) \
-      reg [L:0] name``_reg; \
-      always @(posedge name``_gclk) name``_reg <= name``_next; \
-      wire [L:0] name = name``_reg;
-  `elsif PDK_ihp_sg13g2
+  `ifdef PDK_ihp_sg13g2
     `define BUF(name) sg13g2_dlygate4sd3_1 name``buf_[L:0] ( .X(name``_buf), .A(name) );
     `define CLKGATE(name, en) \
       wire name``_gclk; \
@@ -89,7 +77,6 @@ module tt_um_vga_ca(
       wire [L:0] name; \
       sky130_fd_sc_hd__dfrtp_1 name``_reg[L:0] ( .CLK(name``_gclk), .D(name``_next), .Q(name), .RESET_B(1'b1) );
   `else
-    // Fallback if neither applies, maybe synthesis drops it but it allows tests to pass
     `define BUF(name) assign name``_buf = name
     `define CLKGATE(name, en) \
       reg name``_latchen; \
@@ -116,20 +103,8 @@ module tt_um_vga_ca(
   wire right = `TAIL(cells, 1);
 
   reg [10:0] row_count;
-  wire [2:0] i = row_count[10:8];
-  reg [7:0] rules [0:7];
-  initial begin
-        rules[0] = 30;
-        rules[1] = 110;
-        rules[2] = 22;
-        rules[3] = 73;
-        rules[4] = 90;
-        rules[5] = 146;
-        rules[6] = 105;
-        rules[7] = 102;
-  end  
-
-  wire [7:0] rule = rules[i];
+  wire [5:0] rule_i = (row_count[10:5] ^ {3'b00, cell_x[7:5]});
+  wire [7:0] rule = rule_i*173;
   wire [5:0] rule_color = rule[6:1];
   
   wire seed_cell = cell_x == GRID_W/2;
