@@ -2,11 +2,22 @@ import re
 import sys
 
 def generate_placement():
+    with open("src/project.v", "r") as f:
+        project_v = f.read()
+    
+    grid_w_match = re.search(r"parameter\s+GRID_W\s*=\s*(\d+);", project_v)
+    if not grid_w_match:
+        print("Error: Could not find GRID_W parameter in src/project.v")
+        sys.exit(1)
+    
+    grid_w = int(grid_w_match.group(1))
+    print(f"Using GRID_W = {grid_w} from src/project.v")
+
     dffs = []
     
     # We now use the explicit instance names directly from project.v defines!
     for array_type in ["cells", "first_row_cells"]:
-        for idx in range(120): # GRID_W = 120
+        for idx in range(grid_w): # GRID_W parsed from project.v
             d_inst = f"{array_type}_reg[{idx}]" # Yosys naming for behavioral reg array
             delay_inst = f"{array_type}buf_[{idx}]"
             tiehi_inst = f"{array_type}_tie[{idx}]"
@@ -32,7 +43,7 @@ def generate_placement():
     site_tie = 4
     site_dff = 27
     site_dly = 9
-    site_gap = 4 # gap between columns for buffers
+    site_gap = 0 # gap between columns for buffers
     
     site_block = site_dff + site_dly + site_gap
     
@@ -71,7 +82,7 @@ def generate_placement():
                     c = block_per_row - 1 - (idx % block_per_row)
                 
                 y_pos = 3.780 + (r * row_height)
-                orient = "FS" if (r % 2 != 0) else "N"
+                orient = "S" if (r % 2 != 0) else "FN"
                 
                 base_x = die_start_x + x_offset + (c * w_block)
                 

@@ -13,8 +13,9 @@
 
   "//": "PL_TARGET_DENSITY_PCT - You can increase this if Global Placement fails with error GPL-0302.",
   "//": "Users have reported that values up to 80 worked well for them.",
-  "PL_TARGET_DENSITY_PCT": 75,
+  "PL_TARGET_DENSITY_PCT": 85,
   "VERILOG_DEFINES": ["PDK_ihp_sg13g2"],
+  "MACRO_PLACEMENT_CFG": "dir::placement.cfg",
   "SYNTH_CLOCKGATE_MIN_WIDTH" : 1,
   "SYNTH_CLOCKGATE_POSEDGE_ICG": "sg13g2_lgcp_1/GATE/CLK/GCLK",
 
