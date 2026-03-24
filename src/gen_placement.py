@@ -68,7 +68,7 @@ def generate_placement():
 
     i, row = 0, 0
     while i<grid_w:
-        n = 5 if row < 4 else 4
+        n = 5 if row < 12 else 4
         n = min(n, grid_w-i)
         flip = row % 2 != 0
         gen_row(die_start_x, row, "", i, n, "LR"[flip])

@@ -19,6 +19,7 @@ int main(int argc, char* argv[]) {
     uint32_t * pixels = f.f.buf;
 
     Vproject mod;
+    mod.ena = 1;
     mod.rst_n = 0;
     mod.eval();
     mod.rst_n = 1;

@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Layout Progress Visualizer</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; height: 100vh; margin: 0; background: #1e1e1e; color: #ddd; }
+        header { padding: 10px; background: #333; display: flex; align-items: center; justify-content: space-between; }
+        main { flex: 1; display: flex; overflow: hidden; position: relative; }
+        canvas { background: #000; cursor: crosshair; flex: 1; image-rendering: pixelated; min-width: 0; }
+        aside { flex: 0 0 350px; padding: 15px; background: #252525; border-left: 1px solid #444; overflow-y: auto; box-sizing: border-box; }
+        footer { padding: 10px 20px; background: #333; display: flex; flex-direction: column; align-items: center; }
+        .slider-container { width: 80%; display: flex; align-items: center; gap: 20px; }
+        input[type=range] { flex: 1; }
+        h1 { margin: 0; font-size: 1.2em; color: #fff; }
+        .cell-info h2 { font-size: 1em; margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 5px; color: #4a9eff; }
+        .net-list { font-size: 0.85em; margin-top: 20px; }
+        .net-item { padding: 4px 0; border-bottom: 1px dashed #444; }
+        .net-item.driver { color: #81c784; }
+        .legend { font-size: 0.8em; color: #888; margin-top: 10px; }
+        #step-label { font-weight: bold; color: #ffca28; }
+        .marker-legend { display: flex; align-items: center; gap: 5px; margin-top: 5px; }
+        .dot { height: 8px; width: 8px; border-radius: 50%; display: inline-block; }
+    </style>
+</head>
+<body>
+    <header>
+        <div id="step-label">Loading data...</div>
+        <h1>OpenROAD Layout Visualizer</h1>
+    </header>
+    <main>
+        <canvas id="layoutCanvas"></canvas>
+        <aside id="infoPanel">
+            <div class="cell-info" id="cellDetail">
+                <h2>Cell Information</h2>
+                <p><strong>Name:</strong> <span id="info-name">-</span></p>
+                <p><strong>Type:</strong> <span id="info-type">-</span></p>
+                <p><strong>Pos:</strong> <span id="info-pos">-</span></p>
+            </div>
+            <div class="net-list" id="netDetail">
+                <h2>Connected Nets</h2>
+                <div id="info-nets"></div>
+            </div>
+            <div class="legend" id="categoryLegend">
+                <h2>Cell Types</h2>
+                <div id="category-list"></div>
+                <hr style="border:0; border-top: 1px solid #444; margin: 15px 0;">
+                <h2>Nets & Markers</h2>
+                <div class="marker-legend"><span class="dot" style="background:#ffffff; opacity: 0.7;"></span> IO Pin</div>
+                <div class="marker-legend"><span class="dot" style="background:#81c784"></span> Driver Pin</div>
+                <div class="marker-legend"><span class="dot" style="background:#e57373"></span> Sink Pin</div>
+                <div class="marker-legend"><span class="dot" style="background:#e040fb"></span> Net Segment (Wire)</div>
+            </div>
+        </aside>
+    </main>
+    <footer>
+        <div class="slider-container">
+            <span>Progress:</span>
+            <input type="range" id="stepSlider" min="0" value="0" step="1">
+        </div>
+    </footer>
+
+    <script>
+        const canvas = document.getElementById('layoutCanvas');
+        const ctx = canvas.getContext('2d');
+        const slider = document.getElementById('stepSlider');
+        const stepLabel = document.getElementById('step-label');
+        const categoryList = document.getElementById('category-list');
+        const [infoName, infoType, infoPos, infoNets] = ['info-name', 'info-type', 'info-pos', 'info-nets'].map(id => document.getElementById(id));
+
+        const colorMap = {
+            'Clock-tree': '#ffeb3b', 'Timing': '#ff4081', 'Sequential': '#4caf50',
+            'Logic': '#2196f3', 'Buffers': '#9c27b0', 'Tri-state': '#00bcd4',
+            'Physical': '#455a64', 'IO': '#ffffff', 'Other': '#616161'
+        };
+
+        function deepClone(obj) {
+            if (obj === undefined) return {};
+            return JSON.parse(JSON.stringify(obj));
+        }
+
+        function getCategory(type) {
+            const t = type.toLowerCase();
+            if (t === 'io_pin') return 'IO';
+            if (t.includes('clk') || t.includes('lgcp')) return 'Clock-tree';
+            if (t.includes('dly')) return 'Timing';
+            if (t.includes('fill') || t.includes('decap') || t.includes('antenn') || t.includes('tap') || t.includes('tie')) return 'Physical';
+            if (t.includes('df') || t.includes('dl')) return 'Sequential';
+            if (t.includes('ebuf') || t.includes('einv')) return 'Tri-state';
+            if (t.includes('buf') || t.includes('inv')) return 'Buffers';
+            if (t.includes('nand') || t.includes('nor') || t.includes('and') || t.includes('or') || 
+                t.includes('xor') || t.includes('xnor') || t.includes('mux') ||
+                /^[ao]\d+/.test(t.split('_').slice(-2, -1)[0] || '')) return 'Logic';
+            return 'Other';
+        }
+
+        let data = null, currentStep = 0, scale = 1, offsetX = 0, offsetY = 0;
+        let visualInstances = {}, globalDie = [0,0,0,0], animationId = null, hoveredInst = null;
+        const ANIM_DURATION = 400;
+
+        function dbToScreenX(x) { return x * scale + offsetX; }
+        function dbToScreenY(y) { return offsetY - y * scale; }
+        function screenToDbX(sx) { return (sx - offsetX) / scale; }
+        function screenToDbY(sy) { return (offsetY - sy) / scale; }
+
+        fetch('layout_data.json').then(res => res.json()).then(json => {
+            data = json;
+            if (!data.steps.length) return;
+            globalDie = [Infinity, Infinity, -Infinity, -Infinity];
+            data.steps.forEach(s => {
+                for(let i=0; i<2; i++) globalDie[i] = Math.min(globalDie[i], s.die_area[i]);
+                for(let i=2; i<4; i++) globalDie[i] = Math.max(globalDie[i], s.die_area[i]);
+            });
+            categoryList.innerHTML = Object.entries(colorMap)
+                .filter(([cat]) => cat !== 'IO')
+                .map(([cat, col]) => `<div class="marker-legend"><span class="dot" style="background:${col}; opacity: 0.7;"></span> ${cat}</div>`)
+                .join('');
+            slider.max = data.steps.length - 1;
+            initStep(0);
+            window.addEventListener('resize', () => draw());
+        });
+
+        function initStep(index) {
+            currentStep = index;
+            const step = data.steps[index];
+            stepLabel.innerText = step.label;
+            visualInstances = {};
+            step.instances.forEach(inst => {
+                visualInstances[inst.name] = { 
+                    bbox: [...inst.bbox], pins: deepClone(inst.pins), 
+                    opacity: 1.0, type: inst.type, nets: step.nets.filter(n => n.conns.some(c => c.inst === inst.name))
+                };
+            });
+            draw();
+        }
+
+        function startTransition(index) {
+            currentStep = index;
+            const targetStep = data.steps[index];
+            stepLabel.innerText = targetStep.label;
+            const startTime = performance.now();
+            const startStates = {};
+            Object.keys(visualInstances).forEach(name => {
+                startStates[name] = { 
+                    bbox: [...visualInstances[name].bbox], 
+                    pins: deepClone(visualInstances[name].pins), 
+                    opacity: visualInstances[name].opacity 
+                };
+            });
+            const targets = {};
+            targetStep.instances.forEach(inst => {
+                targets[inst.name] = { bbox: inst.bbox, pins: inst.pins || {}, type: inst.type, nets: targetStep.nets.filter(n => n.conns.some(c => c.inst === inst.name)) };
+            });
+
+            if (animationId) cancelAnimationFrame(animationId);
+            function animate(currentTime) {
+                const progress = Math.min((currentTime - startTime) / ANIM_DURATION, 1.0);
+                const ease = progress * (2 - progress);
+                Object.keys(visualInstances).forEach(name => {
+                    const start = startStates[name], target = targets[name];
+                    if (target && start) {
+                        for (let i = 0; i < 4; i++) visualInstances[name].bbox[i] = start.bbox[i] + (target.bbox[i] - start.bbox[i]) * ease;
+                        const tPins = target.pins || {};
+                        const sPins = start.pins || {};
+                        Object.keys(tPins).forEach(p => {
+                            if (sPins[p]) {
+                                for(let i=0; i<2; i++) visualInstances[name].pins[p][i] = sPins[p][i] + (tPins[p][i] - sPins[p][i]) * ease;
+                            } else { visualInstances[name].pins[p] = tPins[p]; }
+                        });
+                        visualInstances[name].opacity = 1.0;
+                        if (progress > 0.5) visualInstances[name].nets = target.nets;
+                    } else if (target) {
+                        visualInstances[name].bbox = [...target.bbox];
+                        visualInstances[name].pins = deepClone(target.pins);
+                        visualInstances[name].opacity = ease;
+                        visualInstances[name].nets = target.nets;
+                    } else {
+                        visualInstances[name].opacity = 1.0 - ease;
+                    }
+                });
+                Object.keys(targets).forEach(name => {
+                    if (!visualInstances[name]) {
+                        const t = targets[name];
+                        visualInstances[name] = { bbox: [...t.bbox], pins: deepClone(t.pins), opacity: ease, type: t.type, nets: t.nets };
+                    }
+                });
+                if (progress === 1.0) Object.keys(visualInstances).forEach(name => { if (!targets[name]) delete visualInstances[name]; });
+                draw();
+                if (progress < 1.0) animationId = requestAnimationFrame(animate);
+                else animationId = null;
+            }
+            animationId = requestAnimationFrame(animate);
+        }
+
+        function draw() {
+            if (!data) return;
+            canvas.width = canvas.clientWidth; canvas.height = canvas.clientHeight;
+            const dieW = globalDie[2] - globalDie[0], dieH = globalDie[3] - globalDie[1];
+            const padding = 40;
+            scale = Math.min((canvas.width - padding*2)/dieW, (canvas.height - padding*2)/dieH);
+            offsetX = (canvas.width - dieW*scale)/2 - globalDie[0]*scale;
+            offsetY = (canvas.height - dieH*scale)/2 + globalDie[3]*scale;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = '#444'; ctx.strokeRect(dbToScreenX(globalDie[0]), dbToScreenY(globalDie[3]), dieW*scale, dieH*scale);
+
+            Object.entries(visualInstances).forEach(([name, inst]) => {
+                const [x1, y1, x2, y2] = inst.bbox;
+                const isHovered = hoveredInst && hoveredInst.name === name;
+                const cat = getCategory(inst.type);
+                ctx.fillStyle = isHovered ? '#ffca28' : (colorMap[cat] || colorMap['Other']);
+                ctx.globalAlpha = (isHovered ? 1.0 : 0.7) * inst.opacity;
+                if (inst.type === 'IO_PIN') {
+                     ctx.beginPath(); ctx.arc(dbToScreenX((x1+x2)/2), dbToScreenY((y1+y2)/2), 4, 0, Math.PI*2); ctx.fill();
+                } else {
+                    ctx.fillRect(dbToScreenX(x1), dbToScreenY(y2), (x2-x1)*scale, (y2-y1)*scale);
+                    ctx.globalAlpha = inst.opacity;
+                    ctx.strokeStyle = isHovered ? '#fff' : '#000';
+                    ctx.lineWidth = isHovered ? 1.5 : 1.0;
+                    ctx.strokeRect(dbToScreenX(x1), dbToScreenY(y2), (x2-x1)*scale, (y2-y1)*scale);
+                }
+            });
+
+            if (hoveredInst && visualInstances[hoveredInst.name]) {
+                const inst = visualInstances[hoveredInst.name];
+                inst.nets.forEach(net => {
+                    if (net.wires?.length) {
+                        ctx.strokeStyle = '#e040fb'; ctx.lineWidth = Math.max(1.5, scale*500);
+                        ctx.beginPath(); net.wires.forEach(w => { ctx.moveTo(dbToScreenX(w[0]), dbToScreenY(w[1])); ctx.lineTo(dbToScreenX(w[2]), dbToScreenY(w[3])); });
+                        ctx.stroke();
+                    } else {
+                        const drv = net.conns.find(c => c.is_drv);
+                        if (drv) {
+                            ctx.strokeStyle = 'rgba(224, 64, 251, 0.4)'; ctx.lineWidth = 1;
+                            const dPos = visualInstances[drv.inst]?.pins?.[drv.pin] || visualInstances[drv.inst]?.bbox.slice(0,2);
+                            if (dPos) net.conns.forEach(c => {
+                                if (c === drv) return;
+                                const tPos = visualInstances[c.inst]?.pins?.[c.pin] || visualInstances[c.inst]?.bbox.slice(0,2);
+                                if (tPos) { ctx.beginPath(); ctx.moveTo(dbToScreenX(dPos[0]), dbToScreenY(dPos[1])); ctx.lineTo(dbToScreenX(tPos[0]), dbToScreenY(tPos[1])); ctx.stroke(); }
+                            });
+                        }
+                    }
+                    net.conns.forEach(c => {
+                        const p = visualInstances[c.inst]?.pins?.[c.pin];
+                        if (p) {
+                            ctx.fillStyle = c.is_drv ? '#81c784' : '#e57373'; ctx.globalAlpha = 1.0;
+                            ctx.beginPath(); ctx.arc(dbToScreenX(p[0]), dbToScreenY(p[1]), 3, 0, Math.PI*2); ctx.fill();
+                        }
+                    });
+                });
+            }
+        }
+
+        slider.addEventListener('input', e => startTransition(parseInt(e.target.value)));
+        canvas.addEventListener('mousemove', e => {
+            const rect = canvas.getBoundingClientRect();
+            const dbX = screenToDbX(e.clientX - rect.left), dbY = screenToDbY(e.clientY - rect.top);
+            let found = null;
+            for (const [name, inst] of Object.entries(visualInstances)) {
+                if (dbX >= inst.bbox[0] && dbX <= inst.bbox[2] && dbY >= inst.bbox[1] && dbY <= inst.bbox[3]) { found = {name, ...inst}; break; }
+            }
+            if (found?.name !== hoveredInst?.name) {
+                hoveredInst = found;
+                if (found) {
+                    infoName.innerText = found.name; infoType.innerText = found.type;
+                    infoPos.innerText = `(${Math.round(found.bbox[0])}, ${Math.round(found.bbox[1])})`;
+                    infoNets.innerHTML = found.nets.map(n => `<div class="net-item ${n.conns.find(c=>c.inst===found.name)?.is_drv?'driver':''}"><strong>${n.name}</strong></div>`).join('');
+                }
+                draw();
+            }
+        });
+    </script>
+</body>
+</html>

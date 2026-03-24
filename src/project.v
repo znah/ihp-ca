@@ -50,7 +50,7 @@ module tt_um_vga_ca(
   parameter CELL_SIZE = 1<<logCELL_SIZE;
   parameter WIDTH = 640;
   parameter HEIGHT = 480;
-  parameter GRID_W = 128;
+  parameter GRID_W = 136;
   parameter PAD_LEFT = (WIDTH-GRID_W*CELL_SIZE)/2;
   
   wire [9:0] x = pix_x-PAD_LEFT;
@@ -67,7 +67,7 @@ module tt_um_vga_ca(
       sg13g2_lgcp_1 name``_cg (.GATE(en), .CLK(clk), .GCLK(name``_gclk));
     `define DFF(name) \
       wire [L:0] name; \
-      sg13g2_dfrbpq_1 name``_reg[L:0] ( .CLK(name``_gclk), .D(name``_next), .Q(name), .RESET_B(1'b1) );
+      sg13g2_dfrbpq_1 name``_reg[L:0] ( .CLK(name``_gclk), .D(name``_next), .Q(name), .RESET_B(ena) );
   `elsif PDK_sky130A
     `define BUF(name) sky130_fd_sc_hd__dlygate4sd3_1 name``buf_[L:0] ( .X(name``_buf), .A(name) );
     `define CLKGATE(name, en) \
